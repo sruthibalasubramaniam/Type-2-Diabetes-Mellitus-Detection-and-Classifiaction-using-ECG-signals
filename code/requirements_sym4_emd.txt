@@ -7,3 +7,4 @@ PyWavelets
 EMD-signal
 scikit-learn
 joblib
+xgboost

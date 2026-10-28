@@ -35,8 +35,9 @@ from diabetes_sym4_emd_local import (  # noqa: E402
 from second_review_final import denoise  # noqa: E402
 
 
-DEFAULT_DIABETES_DIR = CODE_DIR / "data" / "diabetes"
-DEFAULT_NORMAL_DIR = CODE_DIR / "data" / "normal"
+# The bundled recordings live beside the app in the project-level data folder.
+DEFAULT_DIABETES_DIR = ROOT / "data" / "diabetes"
+DEFAULT_NORMAL_DIR = ROOT / "data" / "normal"
 ONLINE_REFERENCE_URL = "https://zenodo.org/records/6522747/files/16265.ecg.gz?download=1"
 ONLINE_REFERENCE_PAGE = "https://zenodo.org/records/6522747"
 REFERENCE_IMAGE = ROOT / "assets" / "normal_ecg_pqrst_reference.png"
@@ -157,18 +158,31 @@ def make_static_chart(chart: pd.DataFrame) -> plt.Figure:
 
 @st.cache_data(ttl=86400, show_spinner="Loading online normal ECG reference...")
 def load_online_reference() -> np.ndarray:
-    with urlopen(ONLINE_REFERENCE_URL, timeout=30) as response:
-        compressed = response.read()
-    raw = gzip.decompress(compressed)
-    frame = pd.read_csv(io.BytesIO(raw))
-    numeric = frame.apply(pd.to_numeric, errors="coerce")
-    preferred = [column for column in numeric.columns if str(column).lower() in {"channel 1", "channel_1", "ecg"}]
-    candidates = preferred or list(numeric.columns)
-    for column in candidates:
-        values = numeric[column].dropna().to_numpy(dtype=np.float64)
-        if len(values) >= WINDOW_BEFORE + WINDOW_AFTER:
-            return values
-    raise ValueError("The online reference did not contain a usable ECG channel.")
+    # Prefer the public reference, but keep the chart useful when the remote
+    # file changes format or is unavailable. The bundled normal recordings use
+    # the same signal parser as the training pipeline.
+    try:
+        with urlopen(ONLINE_REFERENCE_URL, timeout=30) as response:
+            compressed = response.read()
+        raw = gzip.decompress(compressed)
+        frame = pd.read_csv(io.BytesIO(raw))
+        numeric = frame.apply(pd.to_numeric, errors="coerce")
+        preferred = [column for column in numeric.columns
+                     if str(column).lower() in {"channel 1", "channel_1", "ecg"}]
+        candidates = preferred or list(numeric.columns)
+        for column in candidates:
+            values = numeric[column].dropna().to_numpy(dtype=np.float64)
+            if len(values) >= WINDOW_BEFORE + WINDOW_AFTER:
+                return values
+    except Exception:
+        pass
+
+    for path in sorted(DEFAULT_NORMAL_DIR.glob("*.csv")):
+        try:
+            return read_signal(path, "auto")
+        except (ValueError, pd.errors.ParserError):
+            continue
+    raise ValueError("No usable online or bundled normal ECG reference was found.")
 
 
 def main() -> None:
